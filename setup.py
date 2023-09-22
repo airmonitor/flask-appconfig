@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 import os
@@ -11,18 +10,20 @@ def read(fname):
 
 
 setup(
-    name='flask-appconfig',
-    version='0.12.1.dev1',
-    description=('Configures Flask applications in a canonical way. Also auto-'
-                 'configures Heroku. Aims to standardize configuration.'),
-    long_description=read('README.rst'),
-    author='Marc Brinkmann',
-    author_email='git@marcbrinkmann.de',
-    url='http://github.com/mbr/flask-appconfig',
-    license='MIT',
-    packages=find_packages(exclude=['tests']),
-    install_requires=['flask>=0.12', 'six', 'click'],
+    name="flask-appconfig-current",
+    version="0.13.0",
+    description=(
+        "Configures Flask applications in a canonical way. Also auto-"
+        "configures Heroku. Aims to standardize configuration."
+    ),
+    long_description=read("README.rst"),
+    author="Marc Brinkmann",
+    author_email="git@marcbrinkmann.de",
+    url="http://github.com/mbr/flask-appconfig",
+    license="MIT",
+    packages=find_packages(exclude=["tests"]),
+    install_requires=["flask>=0.12", "six", "click"],
     classifiers=[
-        'Programming Language :: Python :: 2',
-        'Programming Language :: Python :: 3',
-    ])
+        "Programming Language :: Python :: 3.11",
+    ],
+)

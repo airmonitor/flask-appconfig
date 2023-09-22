@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from collections import namedtuple
 from multiprocessing import cpu_count
 
@@ -7,12 +8,11 @@ from .util import try_import
 def _get_cpu_count():
     try:
         return cpu_count()
-    except NotImplementedError:
-        raise RuntimeError('Could not determine CPU count and no '
-                           '--instance-count supplied.')
+    except NotImplementedError as e:
+        raise RuntimeError("Could not determine CPU count and no " "--instance-count supplied.") from e
 
 
-DEFAULT = 'tornado,meinheld,gunicorn,werkzeug-threaded,werkzeug'
+DEFAULT = "tornado,meinheld,gunicorn,werkzeug-threaded,werkzeug"
 
 backends = {}
 
@@ -26,14 +26,14 @@ def backend(name):
     return _
 
 
-BackendInfo = namedtuple('BackendInfo', 'version,extra_info')
+BackendInfo = namedtuple("BackendInfo", "version,extra_info")
 
 
 class ServerBackend(object):
     vulnerable = True
 
     def __init__(self, processes=None):
-        if not hasattr(self, 'processes'):
+        if not hasattr(self, "processes"):
             if processes is None:
                 processes = _get_cpu_count()
             self.processes = processes
@@ -47,40 +47,34 @@ class ServerBackend(object):
         mod = try_import(cls.mod_name)
         if not mod:
             return None
-        version = getattr(mod, '__version__', None) or getattr(mod, 'version',
-                                                               None)
-        return BackendInfo(version or 'deprecated', '')
+        version = getattr(mod, "__version__", None) or getattr(mod, "version", None)
+        return BackendInfo(version or "deprecated", "")
 
     def run_server(self, app, host, port):
         raise NotImplementedError
 
     def __str__(self):
-        return '{} {}'.format(self.name, self.get_info().version)
+        return f"{self.name} {self.get_info().version}"
 
 
-@backend('werkzeug')
+@backend("werkzeug")
 class WerkzeugBackend(ServerBackend):
     threaded = False
-    mod_name = 'werkzeug'
+    mod_name = "werkzeug"
 
     def run_server(self, app, host, port):
-        app.run(host,
-                port,
-                debug=False,
-                use_evalex=False,
-                threaded=self.threaded,
-                processes=self.processes)
+        app.run(host, port, debug=False, use_evalex=False, threaded=self.threaded, processes=self.processes)
 
 
-@backend('werkzeug-threaded')
+@backend("werkzeug-threaded")
 class WerkzeugThreaded(WerkzeugBackend):
     threaded = True
     processes = 1
 
 
-@backend('tornado')
+@backend("tornado")
 class TornadoBackend(ServerBackend):
-    mod_name = 'tornado'
+    mod_name = "tornado"
 
     def run_server(self, app, host, port):
         from tornado.wsgi import WSGIContainer
@@ -92,18 +86,15 @@ class TornadoBackend(ServerBackend):
         IOLoop.instance().start()
 
 
-@backend('gunicorn')
+@backend("gunicorn")
 class GUnicornBackend(ServerBackend):
-    mod_name = 'gunicorn'
+    mod_name = "gunicorn"
 
     def run_server(self, app, host, port):
         import gunicorn.app.base
 
         class FlaskGUnicornApp(gunicorn.app.base.BaseApplication):
-            options = {
-                'bind': '{}:{}'.format(host, port),
-                'workers': self.processes
-            }
+            options = {"bind": f"{host}:{port}", "workers": self.processes}
 
             def load_config(self):
                 for k, v in self.options.items():
@@ -115,9 +106,9 @@ class GUnicornBackend(ServerBackend):
         FlaskGUnicornApp().run()
 
 
-@backend('meinheld')
+@backend("meinheld")
 class MeinHeldBackend(ServerBackend):
-    mod_name = 'meinheld'
+    mod_name = "meinheld"
 
     def run_server(self, app, host, port):
         from meinheld import server

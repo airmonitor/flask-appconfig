@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from importlib import import_module
 
 
@@ -10,6 +11,5 @@ def try_import(*module_names):
 
 
 def try_import_obj(module_name, name):
-    mod = try_import(module_name)
-    if mod:
+    if mod := try_import(module_name):
         return getattr(mod, name, None)
