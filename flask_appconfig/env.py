@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 import json
@@ -10,9 +11,9 @@ def from_envvars(conf, prefix=None, envvars=None, as_json=True):
     Values are parsed as JSON. If parsing fails with a ValueError,
     values are instead used as verbatim strings.
 
-    :param conf:
+    :param app: App, whose configuration should be loaded from ENVVARs.
     :param prefix: If ``None`` is passed as envvars, all variables from
-                   ``environing`` starting with this prefix are imported. The
+                   ``environ`` starting with this prefix are imported. The
                    prefix is stripped upon import.
     :param envvars: A dictionary of mappings of environment-variable-names
                     to Flask configuration names. If a list is passed
@@ -28,7 +29,7 @@ def from_envvars(conf, prefix=None, envvars=None, as_json=True):
         envvars = {k: None for k in envvars}
 
     if not envvars:
-        envvars = {k: k[len(prefix) :] for k in os.environ if k.startswith(prefix)}
+        envvars = {k: k[len(prefix) :] for k in os.environ.keys() if k.startswith(prefix)}
 
     for env_name, name in envvars.items():
         if name is None:

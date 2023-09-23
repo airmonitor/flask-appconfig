@@ -6,259 +6,321 @@ import sys
 import time
 
 import click
-from flask import current_app
 
 from . import server_backends
 from .middleware import ReverseProxied
-from .signals import db_before_reset, db_reset_dropped, db_reset_created, db_after_reset
-from .util import try_import_obj
+from .util import honcho_parse_env
+
+try:
+    import importlib
+except ImportError:
+    click.echo("You do not have importlib installed. Please install a " "backport for versions < 2.7/3.1 first.")
+    sys.exit(1)
 
 ENV_DEFAULT = ".env"
-APP_ENV_VAR = "FLASK_APP"
+APP_ENVVAR = "FLASK_APP"
 
 
-def register_cli(cli):
-    @cli.command(help="Runs a development server with extras.")
-    @click.option("--host", "-h", default="localhost", help="Hostname to bind to. Defaults to localhost")
-    @click.option("--port", "-p", type=int, default=5000, help="Port to listen on. Defaults to 5000")
-    @click.option("--ssl", "-S", flag_value="adhoc", default=None, help="Enable SSL with a self-signed cert")
-    @click.option(
-        "--gen-secret-key/--no-gen-secret-key", default=True, help="Enable or disable automatic secret key generation"
-    )
-    @click.option(
-        "--flask-debug/--no-flask-debug",
-        "-e/-E",
-        default=None,
-        help="Enable/disable Flask-Debug or Flask-DebugToolbar "
-        "extensions. By default, both are enabled if debug is "
-        "enabled.",
-    )
-    @click.option(
-        "--extended-reload",
-        "-R",
-        default=2,
-        type=float,
-        help="Seconds before restarting the app if a non-recoverable "
-        "exception occured (e.g. SyntaxError). Set this to 0 "
-        "to disable (default: 2.0)",
-    )
-    def dev(host, port, ssl, gen_secret_key, flask_debug, extended_reload):
-        # FIXME: support all options of ``flask run``
-        app = current_app
+@click.group(invoke_without_command=True)
+@click.option("--app", "-a", "app_name", envvar=APP_ENVVAR, help="App to import")
+@click.option(
+    "--configfile",
+    "-c",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Configuration file to pass as the first parameter to " "create_app",
+)
+@click.option(
+    "--env",
+    "-e",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help='Load environment variables from file (default: "{}")'.format(ENV_DEFAULT),
+)
+@click.option(
+    "-m/-M", "--amend-path/--no-amend-path", default=True, help="Add the local directory to sys.path (default: on)"
+)
+@click.pass_context
+def cli(ctx, app_name, configfile, env, amend_path):
+    extra_files = []
+    if configfile:
+        extra_files.append(configfile)
 
-        if not app.debug:
-            click.echo(" * app.debug = True")
-            app.debug = True  # conveniently force debug mode
-        extra_files = []
+    if env is None and os.path.exists(ENV_DEFAULT):
+        env = ENV_DEFAULT
 
-        if gen_secret_key and app.config.get("SECRET_KEY", None) is None:
-            app.config["SECRET_KEY"] = os.urandom(64)
+    if env:
+        extra_files.append(env)
+        buf = open(env).read()
+        os.environ.update(honcho_parse_env(buf))
 
-        # add configuration file to extra_files if passed in
-        config_env_name = f"{app.name.upper()}_CONFIG"
-        if config_env_name in os.environ:
-            extra_files.append(os.environ[config_env_name])
+        # disabled: this functionality will be hard if not impossible to
+        # implemend in flask 1.0. disable it for now
+        # if app_name is None and APP_ENVVAR in os.environ:
+        #     app_name = os.environ[APP_ENVVAR]
 
-        msgs = []
+    if app_name is None:
+        click.echo("No --app parameter and FLASK_APP is not set.")
+        sys.exit(1)
 
-        # try to load debug extensions
-        if flask_debug is None:
-            flask_debug = app.debug
+    try:
+        mod = importlib.import_module(app_name)
+    except ImportError:
+        if not amend_path:
+            raise
+        sys.path.append(".")
+        mod = importlib.import_module(app_name)
 
-        if flask_debug:
-            Debug = try_import_obj("flask_debug", "Debug")
-            DebugToolbarExtension = try_import_obj("flask_debugtoolbar", "DebugToolbarExtension")
+    app = mod.create_app(configfile)
 
-        if Debug:
-            Debug(app)
-            app.config["SERVER_NAME"] = "{}:{}".format(host, port)
+    obj = {}
+    obj["app"] = app
+    obj["extra_files"] = extra_files
+    obj["app_mod"] = mod
 
-            # taking off the safety wheels
-            app.config["FLASK_DEBUG_DISABLE_STRICT"] = True
+    ctx.obj = obj
 
-        if DebugToolbarExtension:
-            # Flask-Debugtoolbar does not check for debugging settings at
-            # runtime. this hack enabled debugging if desired before
-            # initializing the extension
-            if app.debug:
-                # set the SECRET_KEY, but only if we're in debug-mode
-                if not app.config.get("SECRET_KEY", None):
-                    msgs.append('SECRET_KEY not set, using insecure "devkey"')
-                    app.config["SECRET_KEY"] = "devkey"
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(dev)
 
-            DebugToolbarExtension(app)
 
-        def on_off(ext):
-            return "on" if ext is not None else "off"
+@cli.command(
+    help="Imports a module passed on the commandline, instantiates an app by "
+    "calling imported_module.create_app() with an optional configuration "
+    "file and runs it in debug mode."
+)
+@click.option("--debug/--no-debug", "-d/-D", default=True, help="Enabled/disable debug (enabled by default)")
+@click.option("--hostname", "-H", default="localhost", help="Hostname to bind to. Defaults to localhost")
+@click.option("--port", "-p", type=int, default=5000, help="Port to listen on. Defaults to 5000")
+@click.option("--ssl", "-S", flag_value="adhoc", default=None, help="Enable SSL with a self-signed cert")
+@click.option(
+    "--flask-debug/--no-flask-debug",
+    "-e/-E",
+    default=None,
+    help="Enable/disable Flask-Debug or Flask-DebugToolbar " "extensions (default: same as --debug)",
+)
+@click.option(
+    "--extended-reload",
+    "-R",
+    default=2,
+    type=float,
+    help="Seconds before restarting the app if a non-recoverable "
+    "exception occured (e.g. SyntaxError). Set this to 0 "
+    "to disable (default: 2.0)",
+)
+@click.pass_obj
+def dev(obj, debug, hostname, port, ssl, flask_debug, extended_reload):
+    app = obj["app"]
 
-        msgs.insert(0, "Flask-Debug: {}".format(on_off(Debug)))
-        msgs.insert(0, "Flask-DebugToolbar: {}".format(on_off(DebugToolbarExtension)))
+    msgs = []
 
-        if msgs:
-            click.echo(" * {}".format(", ".join(msgs)))
+    if flask_debug is None:
+        flask_debug = debug
 
-        if extended_reload > 0:
-            # we need to moneypatch the werkzeug reloader for this feature
-            from werkzeug._reloader import ReloaderLoop
+    Debug = None
+    DebugToolbarExtension = None
 
-            orig_restart = ReloaderLoop.restart_with_reloader
+    if flask_debug:
+        try:
+            from flask_debug import Debug
+        except ImportError:
+            pass
 
-            def _mp_restart(*args, **kwargs):
-                while True:
-                    status = orig_restart(*args, **kwargs)
+        try:
+            from flask_debugtoolbar import DebugToolbarExtension
+        except ImportError:
+            pass
 
-                    if status == 0:
-                        break
-                    # an error occured, possibly a syntax or other
-                    click.secho(
-                        "App exited with exit code {}. Will attempted restart "
-                        " in {} seconds.".format(status, extended_reload),
-                        fg="red",
-                    )
-                    time.sleep(extended_reload)
+    if Debug:
+        Debug(app)
+        app.config["SERVER_NAME"] = "{}:{}".format(hostname, port)
 
-                return status
+        # taking off the safety wheels
+        app.config["FLASK_DEBUG_DISABLE_STRICT"] = True
 
-            ReloaderLoop.restart_with_reloader = _mp_restart
+    if DebugToolbarExtension:
+        # Flask-Debugtoolbar does not check for debugging settings at runtime.
+        # this hack enabled debugging if desired before initializing the
+        # extension
+        if debug:
+            app.debug = True
 
-        app.run(host, port, ssl_context=ssl, extra_files=extra_files)
+            # set the SECRET_KEY, but only if we're in debug-mode
+            if not app.config.get("SECRET_KEY", None):
+                msgs.append('SECRET_KEY not set, using insecure "devkey"')
+                app.config["SECRET_KEY"] = "devkey"
 
-    @cli.command(help="Runs a production server.")
-    @click.option("--host", "-H", default="0.0.0.0", help="Hostname to bind to. Defaults to 0.0.0.0")
-    @click.option("--port", "-p", type=int, default=80, help="Port to listen on. Defaults to 80")
-    @click.option(
-        "--processes",
-        "-w",
-        type=int,
-        default=1,
-        help="When possible, run this many instances in separate "
-        "processes. 0 means determine automatically. Default: 1",
-    )
-    @click.option(
-        "--backends",
-        "-b",
-        default=server_backends.DEFAULT,
-        help="Comma-separated list of backends to try. Default: {}".format(server_backends.DEFAULT),
-    )
-    @click.option(
-        "--list", "-l", "list_only", is_flag=True, help="Do not run server, but list available backends for app."
-    )
-    @click.option(
-        "--reverse-proxied",
-        is_flag=True,
-        help="Enable HTTP-reverse proxy middleware. Do not activate "
-        "this unless you need it, it becomes a security risks when used "
-        "incorrectly.",
-    )
-    def serve(host, port, processes, backends, list_only, reverse_proxied):
-        if processes <= 0:
-            processes = None
+        DebugToolbarExtension(app)
 
-        click.secho("flask serve is currently experimental. Use it at your " "own risk", fg="yellow", err=True)
-        app = current_app
+    def on_off(ext):
+        return "on" if ext is not None else "off"
 
-        # we NEVER allow debug mode in production
-        app.debug = False
+    msgs.insert(0, "Flask-Debug: {}".format(on_off(Debug)))
+    msgs.insert(0, "Flask-DebugToolbar: {}".format(on_off(DebugToolbarExtension)))
 
-        wsgi_app = app
+    if msgs:
+        click.echo(" * {}".format(", ".join(msgs)))
 
-        if reverse_proxied:
-            wsgi_app = ReverseProxied(app)
+    if extended_reload > 0:
+        # we need to moneypatch the werkzeug reloader for this feature
+        from werkzeug._reloader import ReloaderLoop
 
-        if list_only:
-            found = False
+        orig_restart = ReloaderLoop.restart_with_reloader
 
-            for backend in backends.split(","):
-                try:
-                    bnd = server_backends.backends[backend]
-                except KeyError:
-                    click.secho("{:20s} invalid".format(backend), fg="red")
-                    continue
+        def _mp_restart(*args, **kwargs):
+            while True:
+                status = orig_restart(*args, **kwargs)
 
-                info = bnd.get_info()
+                if status == 0:
+                    break
+                # an error occured, possibly a syntax or other
+                click.secho(
+                    "App exited with exit code {}. Will attempted restart in "
+                    "{} seconds.".format(status, extended_reload),
+                    fg="red",
+                )
+                time.sleep(extended_reload)
 
-                if info is None:
-                    click.secho("{:20s} missing module".format(backend), fg="red")
-                    continue
+            return status
 
-                fmt = {}
-                if not found:
-                    fmt["fg"] = "green"
-                    found = True
+        ReloaderLoop.restart_with_reloader = _mp_restart
 
-                click.secho("{b.name:20s} {i.version:10s} {i.extra_info}".format(b=bnd, i=info), **fmt)
-            return
+    app.run(hostname, port, ssl_context=ssl, debug=debug, extra_files=obj["extra_files"])
 
-        # regular operation
+
+@cli.command()
+@click.option("--hostname", "-H", default="0.0.0.0", help="Hostname to bind to. Defaults to 0.0.0.0")
+@click.option("--port", "-p", type=int, default=80, help="Port to listen on. Defaults to 80")
+@click.option(
+    "--processes",
+    "-w",
+    type=int,
+    default=0,
+    help="When possible, run this many instances in separate " "processes. 0 means determine automatically. Default: 1",
+)
+@click.option(
+    "--backends",
+    "-b",
+    default=server_backends.DEFAULT,
+    help="Comma-separated list of backends to try. Default: {}".format(server_backends.DEFAULT),
+)
+@click.option("--list", "-l", "list_only", is_flag=True, help="Do not run server, but list available backends for app.")
+@click.option(
+    "--reverse-proxied",
+    is_flag=True,
+    help="Enable HTTP-reverse proxy middleware. Do not activate "
+    "this unless you need it, it becomes a security risks when used "
+    "incorrectly.",
+)
+@click.pass_obj
+def serve(obj, hostname, port, processes, backends, list_only, reverse_proxied):
+    if processes <= 0:
+        processes = None
+
+    click.secho("flask serve is currently experimental. Use it at your " "own risk", fg="yellow", err=True)
+    app = obj["app"]
+    wsgi_app = app
+
+    if reverse_proxied:
+        wsgi_app = ReverseProxied(app)
+
+    if list_only:
+        found = False
+
         for backend in backends.split(","):
-            bnd = server_backends.backends[backend]
-            info = bnd.get_info()
-            if not info:
+            try:
+                bnd = server_backends.backends[backend]
+            except KeyError:
+                click.secho("{:20s} invalid".format(backend), fg="red")
                 continue
 
-            b = bnd(processes)
+            info = bnd.get_info()
 
-            rcfg = OrderedDict()
-            rcfg["app"] = app.name
-            rcfg["# processes"] = str(b.processes)
-            rcfg["backend"] = str(b)
-            rcfg["addr"] = "{}:{}".format(host, port)
+            if info is None:
+                click.secho("{:20s} missing module".format(backend), fg="red")
+                continue
 
-            for k, v in rcfg.items():
-                click.echo("{:15s}: {}".format(k, v))
+            fmt = {}
+            if not found:
+                fmt["fg"] = "green"
+                found = True
 
-            try:
-                b.run_server(wsgi_app, host, port)
-                sys.exit(0)  # if the server exits normally, just quit
-            except socket.error as e:
-                if port >= 1024 or e.errno != 13:
-                    raise
+            click.secho("{b.name:20s} {i.version:10s} {i.extra_info}".format(b=bnd, i=info), **fmt)
+        return
 
-                # helpful message when trying to run on port 80 without room
-                # permissions
-                click.echo("Could not open socket on {}:{}: {}. " "Do you have root permissions?".format(host, port, e))
-                sys.exit(13)
-            except RuntimeError as e:
-                click.echo(str(e), err=True)
-                sys.exit(1)
-        else:
-            click.echo("Exhausted list of possible backends", err=True)
+    # regular operation
+    for backend in backends.split(","):
+        bnd = server_backends.backends[backend]
+        info = bnd.get_info()
+        if not info:
+            continue
+
+        b = bnd(processes)
+
+        rcfg = OrderedDict()
+        rcfg["app"] = app.name
+        rcfg["# processes"] = str(b.processes)
+        rcfg["backend"] = str(b)
+        rcfg["addr"] = "{}:{}".format(hostname, port)
+
+        for k, v in rcfg.items():
+            click.echo("{:15s}: {}".format(k, v))
+
+        try:
+            b.run_server(wsgi_app, hostname, port)
+        except socket.error as e:
+            if not port < 1024 or e.errno != 13:
+                raise
+
+            # helpful message when trying to run on port 80 without room
+            # permissions
+            click.echo("Could not open socket on {}:{}: {}. " "Do you have root permissions?".format(hostname, port, e))
+            sys.exit(13)
+        except RuntimeError as e:
+            click.echo(str(e), err=True)
             sys.exit(1)
+    else:
+        click.echo("Exhausted list of possible backends", err=True)
+        sys.exit(1)
 
 
-def register_db_cli(cli, cli_mod):
-    # FIXME: currently disabled
-    @cli.group(help="Flask-SQLAlchemy functions")
-    @click.option("--echo/--no-echo", "-e/-E", default=None, help="Overrides SQLALCHEMY_ECHO")
-    @cli_mod.with_appcontext
-    def db(echo):
-        # FIXME: currently broken.
-        click.secho("flask db is currently experimental. Use it at your " "own risk", fg="yellow", err=True)
+@cli.group()
+@click.option("--model", "-m", default=".model", help="Name of the module that contains the model")
+@click.option("--db", "-d", default="db", help="SQLAlchemy instance name")
+@click.option("--echo/--no-echo", "-e/-E", default=True, help="Overrides SQLALCHEMY_ECHO")
+@click.pass_obj
+def db(obj, model, db, echo):
+    click.secho("flask db is currently experimental. Use it at your " "own risk", fg="yellow", err=True)
 
-        # sanity check
-        if "sqlalchemy" not in current_app.extensions:
-            click.secho("No SQLAlchemy extension loaded. Did you initialize " "your app?", fg="red", err=True)
-            sys.exit(1)
+    model_mod = importlib.import_module(model, obj["app_mod"].__package__)
+    db_obj = getattr(model_mod, db)
+    obj["db"] = db_obj
 
-        if echo is not None:
-            current_app.config["SQLALCHEMY_ECHO"] = echo
+    obj["app"].config["SQLALCHEMY_ECHO"] = echo
 
-    @db.command(help="Drop and recreated schema")
-    def reset():
-        app = current_app
-        db = current_app.extensions["sqlalchemy"].db
+    with obj["app"].app_context():
+        click.echo(f"Connected to database: {obj['db']}")
 
-        # FIXME: this should be in a transaction, but flask-sqlalchemy
-        # currently makes it hard to get it right.
-        #
-        # problems that occured: con is not the same as the connection used
-        # by drop_all and create_all, causing deadlocks to occur
-        db_before_reset.send(app, db=db, con=db.engine)
 
+@db.command()
+@click.pass_obj
+def reset(obj):
+    db = obj["db"]
+
+    with obj["app"].app_context():
+        click.echo("Resetting database")
         db.drop_all()
-        db_reset_dropped.send(app, db=db, con=db.engine)
-
         db.create_all()
-        db_reset_created.send(app, db=db, con=db.engine)
 
-        db_after_reset.send(app, db=db, con=db.engine)
+
+@click.command()
+@click.argument("app", nargs=-1)
+def flaskdev(app):
+    app = app[0] if app else "yourapp"
+    click.echo(
+        "flaskdev has been deprecated in favor of the 'flask' "
+        "utility. flask is included with Flask-Appconfig. "
+        "To perform the same action as before, run\n\n"
+        "    flask --app={} dev\n\n"
+        "Note that this tool is provisional, as Flask 1.0 will likely "
+        "ship with a built-in tool of the same name.".format(app)
+    )

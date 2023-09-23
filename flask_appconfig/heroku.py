@@ -1,11 +1,14 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 import os
 import re
 import warnings
-from six.moves.urllib_parse import urlparse
+
+from urllib.parse import urlparse
 
 from . import env
+
 
 HEROKU_POSTGRES_ENV_NAME_RE = re.compile("HEROKU_POSTGRESQL_[A-Z_]*URL")
 
@@ -27,7 +30,7 @@ def from_heroku_envvars(config):
 
     # search postgresql config using regex
     if "DATABASE_URL" not in os.environ:
-        for k in os.environ:
+        for k in os.environ.keys():
             if HEROKU_POSTGRES_ENV_NAME_RE.match(k):
                 var_map[k] = "SQLALCHEMY_DATABASE_URI"
                 warnings.warn(
