@@ -11,7 +11,7 @@ def from_envvars(conf, prefix=None, envvars=None, as_json=True):
     Values are parsed as JSON. If parsing fails with a ValueError,
     values are instead used as verbatim strings.
 
-    :param app: App, whose configuration should be loaded from ENVVARs.
+    :param conf:
     :param prefix: If ``None`` is passed as envvars, all variables from
                    ``environ`` starting with this prefix are imported. The
                    prefix is stripped upon import.

@@ -17,7 +17,7 @@ class ReverseProxied(object):
         proxy_set_header X-Script-Name /myprefix;
         }
 
-    :param app: the WSGI application
+    :param app: The WSGI application
     """
 
     def __init__(self, app):

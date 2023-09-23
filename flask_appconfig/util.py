@@ -27,20 +27,14 @@ import re
 def honcho_parse_env(content):
     values = {}
     for line in content.splitlines():
-        m1 = re.match(r"\A([A-Za-z_0-9]+)=(.*)\Z", line)
-        if m1:
+        if m1 := re.match(r"\A([A-Za-z_0-9]+)=(.*)\Z", line):
             key, val = m1.group(1), m1.group(2)
 
-            m2 = re.match(r"\A'(.*)'\Z", val)
-            if m2:
+            if m2 := re.match(r"\A'(.*)'\Z", val):
                 val = m2.group(1)
 
-            m3 = re.match(r'\A"(.*)"\Z', val)
-            if m3:
+            if m3 := re.match(r'\A"(.*)"\Z', val):
                 val = re.sub(r"\\(.)", r"\1", m3.group(1))
 
             values[key] = val
     return values
-
-
-# end of honcho source

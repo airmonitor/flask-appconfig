@@ -11,7 +11,7 @@ def read(fname):
 
 setup(
     name="flask-appconfig-current",
-    version="0.13.0",
+    version="0.13.1",
     description=(
         "Configures Flask applications in a canonical way. Also auto-"
         "configures Heroku. Aims to standardize configuration."

@@ -139,7 +139,7 @@ def dev(obj, debug, hostname, port, ssl, flask_debug, extended_reload):
 
     if DebugToolbarExtension:
         # Flask-Debugtoolbar does not check for debugging settings at runtime.
-        # this hack enabled debugging if desired before initializing the
+        # This hack enabled debugging if desired before initializing the
         # extension
         if debug:
             app.debug = True
